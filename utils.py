@@ -23,7 +23,7 @@ class TrafficSignsDataset(Dataset):
 
     return img, label
 
-def get_loader(dataset, annotations, batch_size, weight_sample, shuffle):
+def get_loader(dataset, annotations, batch_size, weight_sample, shuffle, num_workers=12):
   sampler = None
   annotations = pd.read_csv(annotations)
   assert(shuffle != weight_sample)
@@ -42,4 +42,4 @@ def get_loader(dataset, annotations, batch_size, weight_sample, shuffle):
       sample_weights[idx] = weights[label]
 
     sampler = WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
-  return DataLoader(dataset, batch_size=batch_size, sampler=sampler, shuffle=shuffle)
+  return DataLoader(dataset, batch_size=batch_size, sampler=sampler, shuffle=shuffle, num_workers=num_workers)

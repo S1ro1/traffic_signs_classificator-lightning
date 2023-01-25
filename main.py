@@ -10,7 +10,7 @@ from utils import TrafficSignsDataset, get_loader
 class CNN(pl.LightningModule):
     def __init__(self, num_classes, in_channels=3):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, 32, 3, 1, 3)
+        self.conv1 = nn.Conv2d(in_channels, 32, 3, stride=1, padding=3)
         self.p1 = nn.MaxPool2d(2, 2)
 
         self.conv2 = nn.Conv2d(32, 64, 3, stride=1, padding=1)
@@ -33,13 +33,29 @@ class CNN(pl.LightningModule):
         logger = self.logger.experiment
 
         x, y = batch
+        x = x.float()
+
         out = self._common_step(x, batch_idx)
-        train_loss = nn.CrossEntropyLoss(out, y)
+        loss = F.cross_entropy(out, y)
+        self.log("train loss", loss)
+        return loss
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), 3e-4)
         return optimizer
 
 
+if __name__ == "__main__":
+    logger = pl_loggers.WandbLogger(project="Traffic-signs-lightning", log_model="all")
 
+    train_dataset = TrafficSignsDataset("resized_data/train-annotations.csv", True)
+    test_dataset = TrafficSignsDataset("resized_data/test-annotations.csv", False)
 
+    train_dataloader = get_loader(train_dataset, "resized_data/train-annotations.csv", 64, False, shuffle=True)
+    test_dataloader = get_loader(test_dataset, "resized_data/test-annotations.csv", 64, False, shuffle=True)
+
+    model = CNN(num_classes=43)
+
+    trainer = pl.Trainer(max_epochs=30, accelerator='gpu', devices=1, logger=logger)
+
+    trainer.fit(model=model, train_dataloaders=train_dataloader)
