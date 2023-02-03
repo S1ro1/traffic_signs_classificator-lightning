@@ -5,29 +5,38 @@ from torchvision import transforms
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
+from pytorch_lightning.cli import LightningCLI
 from utils import TrafficSignsDataset, get_loader
-import os
+import torchvision.models as models
 
 
 class CNN(pl.LightningModule):
-    def __init__(self, num_classes, in_channels=3):
+    def __init__(self, num_classes=43, in_channels=3):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, 32, 3, stride=1, padding=3)
-        self.p1 = nn.MaxPool2d(2, 2)
 
-        self.conv2 = nn.Conv2d(32, 64, 3, stride=1, padding=1)
-        self.p2 = nn.MaxPool2d(2, 2)
+        self.conv1 = nn.Conv2d(
+            in_channels, 64, kernel_size=3, stride=1, padding=1)
+        self.pool1 = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.pool2 = nn.MaxPool2d(2, 2)
+        self.dropout = nn.Dropout(p=0.2)
 
-        self.fc1 = nn.Linear(64*8*8, 64)
-        self.fc2 = nn.Linear(64, num_classes)
+        self.fc1 = nn.Linear(7*7*128, 128, )
+        self.fc2 = nn.Linear(128, num_classes)
+
+    def _calculate_accuracy(self, out, y):
+        n_correct = (out.argmax(1) == y).sum().item()
+        accuracy = n_correct/y.shape[0]
+
+        return accuracy
 
     def _common_step(self, x, batch_idx):
-
-        x = self.p1(F.relu(self.conv1(x)))
-        x = self.p2(F.relu(self.conv2(x)))
+        x = self.pool1(self.conv1(x))
+        x = self.pool2(self.conv2(x))
 
         x = x.reshape(x.shape[0], -1)
-        x = F.relu(self.fc1(x))
+
+        x = F.relu(self.dropout(self.fc1(x)))
 
         return self.fc2(x)
 
@@ -40,11 +49,25 @@ class CNN(pl.LightningModule):
         out = self._common_step(x, batch_idx)
         loss = F.cross_entropy(out, y)
 
-        n_correct = (out.argmax(1) == y).sum().item()
-        accuracy = n_correct/x.shape[0]
+        accuracy = self._calculate_accuracy(out, y)
 
         self.log("train accuracy", accuracy, prog_bar=True)
         self.log("train loss", loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        logger = self.logger.experiment
+
+        x, y = batch
+        x = x.float()
+
+        out = self._common_step(x, batch_idx)
+        loss = F.cross_entropy(out, y)
+
+        accuracy = self._calculate_accuracy(out, y)
+
+        self.log("val accuracy", accuracy, prog_bar=True)
+        self.log("val loss", loss)
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -56,8 +79,7 @@ class CNN(pl.LightningModule):
         out = self._common_step(x, batch_idx)
         loss = F.cross_entropy(out, y)
 
-        n_correct = (out.argmax(1) == y).sum().item()
-        accuracy = n_correct/x.shape[0]
+        accuracy = self._calculate_accuracy(out, y)
 
         self.log("test accuracy", accuracy)
         self.log("test loss", loss)
@@ -68,26 +90,35 @@ class CNN(pl.LightningModule):
         return optimizer
 
 
+class TrafficDataModule(pl.LightningDataModule):
+    def __init__(self, batch_size=64):
+        super().__init__()
+        self.batch_size = batch_size
+
+        self.train_dataset = TrafficSignsDataset(
+            "resized_data/train-annotations.csv", False)
+        self.test_dataset = TrafficSignsDataset(
+            "resized_data/test-annotations.csv", False)
+
+    def train_dataloader(self):
+        return get_loader(self.train_dataset, "resized_data/train-annotations.csv", self.batch_size, False, shuffle=True, num_workers=0)
+
+    def test_dataloader(self):
+        return get_loader(self.test_dataset, "resized_data/test-annotations.csv", self.batch_size, False, shuffle=True, num_workers=0)
+
+    def val_dataloader(self):
+        return self.test_dataloader()
+
 if __name__ == "__main__":
     logger = pl_loggers.WandbLogger(
-        project="Traffic-signs-lightning", log_model="all")
+        project="Traffic-signs-l2", log_model="all")
 
-    train_dataset = TrafficSignsDataset(
-        "resized_data/train-annotations.csv", True)
-    test_dataset = TrafficSignsDataset(
-        "resized_data/test-annotations.csv", False)
-
-    train_dataloader = get_loader(
-        train_dataset, "resized_data/train-annotations.csv", 64, False, shuffle=True)
-    test_dataloader = get_loader(
-        test_dataset, "resized_data/test-annotations.csv", 64, False, shuffle=True)
-
-    model = CNN(num_classes=43)
-    checkpoint = "Traffic-signs-lightning/e9f2ff3t/checkpoints/epoch=6-step=4291.ckpt"
+    model = CNN()
+    data_module = TrafficDataModule()
 
     trainer = pl.Trainer(max_epochs=30, accelerator='gpu',
                          devices=1, logger=logger)
 
-    trainer.fit(model=model, train_dataloaders=train_dataloader, ckpt_path=checkpoint)
-    trainer.test(model, test_dataloader)
+    trainer.fit(model=model, datamodule=data_module)
 
+    trainer.test(model, datamodule=data_module)

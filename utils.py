@@ -16,7 +16,7 @@ class TrafficSignsDataset(Dataset):
     path = self.labels.iloc[idx]["path"]
     label = self.labels.iloc[idx]["label"]
     
-    img = read_image(path)
+    img = read_image(path).float()
     
     if self.transform:
       img = self.transform(img)
