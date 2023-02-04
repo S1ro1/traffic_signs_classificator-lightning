@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 import torchmetrics
 from pytorch_lightning import loggers as pl_loggers
-from pytorch_lightning.cli import LightningCLI
+from pytorch_lightning.callbacks import (EarlyStopping, ModelCheckpoint)
 from utils import TrafficSignsDataset, get_loader
 import torchvision.models as models
 
@@ -23,10 +23,14 @@ class CNN(pl.LightningModule):
         self.fc2 = nn.Linear(128, num_classes)
 
         self.pool = nn.MaxPool2d(2, 2)
-        self.dropout = nn.Dropout(p=0.1)
+        self.dropout = nn.Dropout(p=0.10)
 
-        self.train_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=43)
-        self.val_accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=43)
+        self.train_accuracy = torchmetrics.Accuracy(
+            task="multiclass", num_classes=43)
+        self.val_accuracy = torchmetrics.Accuracy(
+            task="multiclass", num_classes=43)
+        self.test_accuracy = torchmetrics.Accuracy(
+            task="multiclass", num_classes=43)
 
     def _common_step(self, x, batch_idx):
         x = self.pool(self.conv1(x))
@@ -76,6 +80,8 @@ class CNN(pl.LightningModule):
         out = self._common_step(x, batch_idx)
         loss = F.cross_entropy(out, y)
 
+        accuracy = self.test_accuracy.update(out, y)
+
         self.log("test loss", loss, prog_bar=True)
         return loss
 
@@ -84,6 +90,10 @@ class CNN(pl.LightningModule):
 
     def validation_epoch_end(self, outputs):
         self.log('val_accuracy', self.val_accuracy.compute(), prog_bar=True)
+        self.val_accuracy.reset()
+
+    def test_epoch_end(self, outputs):
+        self.log('test_accuracy', self.test_accuracy.compute())
         self.val_accuracy.reset()
 
     def configure_optimizers(self):
@@ -118,8 +128,14 @@ if __name__ == "__main__":
     model = CNN()
     data_module = TrafficDataModule()
 
+    early_stop = EarlyStopping(
+        monitor="val_loss", patience=4, mode="min", min_delta=0.025, verbose=True)
+    save_callback = ModelCheckpoint(
+        monitor="val_loss", mode="min", dirpath="best_models", filename="{epoch}-{val_loss:.2f}", verbose=True, save_on_train_epoch_end=False,
+    )
+
     trainer = pl.Trainer(max_epochs=30, accelerator='gpu',
-                         devices=1, logger=logger)
+                         devices=1, logger=logger, callbacks=[early_stop, save_callback])
 
     trainer.fit(model=model, datamodule=data_module)
 
